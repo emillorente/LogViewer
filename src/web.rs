@@ -8,7 +8,14 @@ use crate::filters::View;
 use crate::process;
 use crate::readers;
 
-type RecordCache = Arc<RwLock<HashMap<String, Vec<crate::Record>>>>;
+type RecordCache = Arc<RwLock<HashMap<String, CachedDataSet>>>;
+
+#[derive(Clone)]
+struct CachedDataSet {
+    records: Vec<crate::Record>,
+    iso_dates: Vec<Option<String>>,
+    empty_ts: usize,
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -16,23 +23,46 @@ struct AppState {
     cache: RecordCache,
 }
 
-fn load_records(path: &str) -> Result<Vec<crate::Record>, warp::Rejection> {
+fn load_records(path: &str) -> Result<CachedDataSet, warp::Rejection> {
     let reader = readers::detect_reader(path).map_err(|_| warp::reject::not_found())?;
     let view = view_for_file(path);
     let mut records: Vec<crate::Record> = process(reader, view).filter_map(|r| r.ok()).collect();
     records.reverse();
-    Ok(records)
+    let mut with_ts: Vec<(crate::Record, Option<String>)> = Vec::with_capacity(records.len());
+    let mut empty_ts = 0usize;
+    for rec in records {
+        let ds = rec.variables.get("timestamp").or_else(|| rec.variables.get("time")).cloned().unwrap_or_default();
+        if ds.is_empty() {
+            empty_ts += 1;
+            with_ts.push((rec, None));
+        } else {
+            with_ts.push((rec, date_str_to_iso(&ds)));
+        }
+    }
+    // Partition: timestamped records first, then empty-timestamp records
+    let mut i = 0;
+    for j in 0..with_ts.len() {
+        if with_ts[j].1.is_some() {
+            if i != j {
+                with_ts.swap(i, j);
+            }
+            i += 1;
+        }
+    }
+    let iso_dates: Vec<Option<String>> = with_ts.iter().map(|(_, iso)| iso.clone()).collect();
+    let records: Vec<crate::Record> = with_ts.into_iter().map(|(r, _)| r).collect();
+    Ok(CachedDataSet { records, iso_dates, empty_ts })
 }
 
-fn cached_records(state: &AppState, path: &str, refresh: bool) -> Result<Vec<crate::Record>, warp::Rejection> {
+fn cached_records(state: &AppState, path: &str, refresh: bool) -> Result<CachedDataSet, warp::Rejection> {
     if refresh {
         state.cache.write().unwrap().remove(path);
-    } else if let Some(records) = state.cache.read().unwrap().get(path) {
-        return Ok(records.clone());
+    } else if let Some(data) = state.cache.read().unwrap().get(path) {
+        return Ok(data.clone());
     }
-    let records = load_records(path)?;
-    state.cache.write().unwrap().insert(path.to_owned(), records.clone());
-    Ok(records)
+    let data = load_records(path)?;
+    state.cache.write().unwrap().insert(path.to_owned(), data.clone());
+    Ok(data)
 }
 
 fn view_for_file(path: &str) -> View {
@@ -151,7 +181,10 @@ async fn handle_query(
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let path = params.get("file").cloned().unwrap_or(state.default_file.clone());
     let refresh = params.get("refresh").map(|v| v == "true").unwrap_or(false);
-    let all_records = cached_records(&state, &path, refresh)?;
+    let data = cached_records(&state, &path, refresh)?;
+    let all_records = &data.records;
+    let iso_dates = &data.iso_dates;
+    let empty_ts = data.empty_ts;
     let skip: usize = params.get("skip").and_then(|v| v.parse().ok()).unwrap_or(0);
     let limit: usize = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(5000);
     let f_level = params.get("level").map(String::as_str).unwrap_or("");
@@ -179,22 +212,38 @@ async fn handle_query(
     let f_hideTriggers = params.get("hideTriggers").map(|v| v == "true").unwrap_or(false);
     let search_q = params.get("q").map(String::as_str).unwrap_or("");
 
+    // Pre-compute dateFrom boundary for early break (records newest-first)
+    let has_date_from = !f_dateFrom.is_empty();
+    let has_date_to = !f_dateTo.is_empty();
+    let main_end = all_records.len() - empty_ts;
+    let date_break = if has_date_from {
+        let mut e = main_end;
+        for i in 0..main_end {
+            if let Some(ref iso) = iso_dates[i] {
+                if iso.as_str() < f_dateFrom { e = i; break; }
+            }
+        }
+        e
+    } else {
+        main_end
+    };
+
     let mut total = 0usize;
     let mut out_records = Vec::new();
 
-    for rec in &all_records {
-        let vars = &rec.variables;
-        let level = vars.get("level").map_or("", |s| s);
-        let comp = vars.get("component").map_or("", |s| s);
-        let proc = vars.get("proc").map_or("", |s| s);
-        let thread = vars.get("thread").map_or("", |s| s);
-        let user = vars.get("user").map_or("", |s| s);
-        let msg = vars.get("message").map_or(&rec.text, |s| s);
-        let source = vars.get("source").map_or("", |s| s);
-        let line = vars.get("line").map_or("", |s| s);
-        let sourceC = vars.get("sourceC").map_or("", |s| s);
-        let lineC = vars.get("lineC").map_or("", |s| s);
-        let ds = vars.get("timestamp").or_else(|| vars.get("time")).map_or("", |s| s);
+    for (i, rec) in all_records.iter().enumerate() {
+        if has_date_from && i >= date_break { break; }
+
+        let level = rec.variables.get("level").map_or("", |s| s);
+        let comp = rec.variables.get("component").map_or("", |s| s);
+        let proc = rec.variables.get("proc").map_or("", |s| s);
+        let thread = rec.variables.get("thread").map_or("", |s| s);
+        let user = rec.variables.get("user").map_or("", |s| s);
+        let msg = rec.variables.get("message").map_or(&rec.text, |s| s);
+        let source = rec.variables.get("source").map_or("", |s| s);
+        let line = rec.variables.get("line").map_or("", |s| s);
+        let sourceC = rec.variables.get("sourceC").map_or("", |s| s);
+        let lineC = rec.variables.get("lineC").map_or("", |s| s);
 
         if !f_level.is_empty() && !level.to_lowercase().contains(&f_level.to_lowercase()) { continue; }
         if !f_comp.is_empty() && !comp.to_lowercase().contains(&f_comp.to_lowercase()) { continue; }
@@ -209,11 +258,9 @@ async fn handle_query(
         let is_trigger = comp.to_uppercase().starts_with("TRIGGER");
         if f_hideTriggers && is_trigger { continue; }
 
-        if !f_dateFrom.is_empty() || !f_dateTo.is_empty() {
-            if let Some(ref iso_str) = date_str_to_iso(ds) {
-                if (!f_dateFrom.is_empty() && iso_str.as_str() < f_dateFrom) || (!f_dateTo.is_empty() && iso_str.as_str() > f_date_to_ref) {
-                    continue;
-                }
+        if has_date_to && i < main_end {
+            if let Some(ref iso) = iso_dates[i] {
+                if iso.as_str() > f_date_to_ref { continue; }
             }
         }
 
