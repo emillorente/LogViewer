@@ -146,6 +146,19 @@ async fn handle_query(
     let f_lineC = params.get("lineC").map(String::as_str).unwrap_or("");
     let f_dateFrom = params.get("dateFrom").map(String::as_str).unwrap_or("");
     let f_dateTo = params.get("dateTo").map(String::as_str).unwrap_or("");
+    // Normalize dateTo to be inclusive: if no seconds, append :59
+    let f_date_to_adj: String;
+    let f_date_to_ref = if !f_dateTo.is_empty() && !f_dateTo.contains(':') {
+        // Date only: YYYY-MM-DD → end of day
+        f_date_to_adj = format!("{}T23:59:59", f_dateTo);
+        f_date_to_adj.as_str()
+    } else if !f_dateTo.is_empty() && f_dateTo.len() <= 16 {
+        // Date+time without seconds → append :59
+        f_date_to_adj = format!("{}:59", f_dateTo);
+        f_date_to_adj.as_str()
+    } else {
+        f_dateTo
+    };
     let f_hideTriggers = params.get("hideTriggers").map(|v| v == "true").unwrap_or(false);
     let search_q = params.get("q").map(String::as_str).unwrap_or("");
 
@@ -179,8 +192,8 @@ async fn handle_query(
         if f_hideTriggers && comp.to_uppercase().starts_with("TRIGGER") { continue; }
 
         if !f_dateFrom.is_empty() || !f_dateTo.is_empty() {
-            if let Some(iso) = date_str_to_iso(ds) {
-                if (!f_dateFrom.is_empty() && iso.as_str() < f_dateFrom) || (!f_dateTo.is_empty() && iso.as_str() > f_dateTo) {
+            if let Some(iso_str) = date_str_to_iso(ds) {
+                if (!f_dateFrom.is_empty() && iso_str.as_str() < f_dateFrom) || (!f_dateTo.is_empty() && iso_str.as_str() > f_date_to_ref) {
                     continue;
                 }
             }
@@ -207,16 +220,23 @@ async fn handle_query(
 }
 
 fn date_str_to_iso(s: &str) -> Option<String> {
-    let parts: Vec<&str> = s.split('/').collect();
-    if parts.len() == 3 {
-        let d = parts[0].parse::<u32>().ok()?;
-        let m = parts[1].parse::<u32>().ok()?;
-        let y = parts[2].parse::<u32>().ok()?;
-        let y = if y < 100 { y + 2000 } else { y };
-        Some(format!("{:04}-{:02}-{:02}", y, m, d))
+    let parts: Vec<&str> = s.splitn(2, ' ').collect();
+    let date_part = parts[0];
+    let time_part = parts.get(1).map(|t| t.split(',').next().unwrap_or(t)).unwrap_or("00:00:00");
+    let dp: Vec<&str> = date_part.split('/').collect();
+    if dp.len() != 3 { return None; }
+    let v0 = dp[0].parse::<u32>().ok()?;
+    let v1 = dp[1].parse::<u32>().ok()?;
+    let v2 = dp[2].parse::<u32>().ok()?;
+    // CORE.OUT: dd/MM/yy HH:mm:ss,fff  (has comma in original time)
+    // reu.out:  yy/MM/dd HH:mm:ss      (no comma)
+    let (d, m, y) = if s.contains(',') {
+        (v0, v1, v2)
     } else {
-        None
-    }
+        (v2, v1, v0)
+    };
+    let y = if y < 100 { y + 2000 } else { y };
+    Some(format!("{:04}-{:02}-{:02}T{}", y, m, d, time_part))
 }
 
 const FRONTEND_HTML: &str = r##"<!DOCTYPE html>
@@ -388,9 +408,9 @@ const FRONTEND_HTML: &str = r##"<!DOCTYPE html>
     z-index: 5;
   }
   .date-range { display: flex; gap: 2px; }
-  .date-range input[type="date"] { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); padding: 1px 4px; border-radius: 3px; font-size: 10px; font-family: 'JetBrains Mono', monospace; width: 72px; box-sizing: border-box; }
-  .date-range input[type="date"]:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); outline: none; }
-  .date-range input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); scale: 0.7; cursor: pointer; }
+  .date-range input[type="datetime-local"] { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); padding: 1px 4px; border-radius: 3px; font-size: 10px; font-family: 'JetBrains Mono', monospace; width: 110px; box-sizing: border-box; color-scheme: dark; }
+  .date-range input[type="datetime-local"]:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); outline: none; }
+  .date-range input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(0.6); scale: 0.7; cursor: pointer; }
   thead .h-row th {
     background: var(--bg-surface);
     padding: 6px 10px;
@@ -957,7 +977,7 @@ function doRenderAll() {
     '<tr class="f-row">' +
       '<th></th>' +
       '<th><input class="col-filter" id="flevel" placeholder="vm…" value="' + esc(colFilters.level) + '"></th>' +
-      '<th><div class="date-range"><input type="date" id="fdateFrom" value="' + esc(colFilters.dateFrom) + '"><input type="date" id="fdateTo" value="' + esc(colFilters.dateTo) + '"></div></th>' +
+      '<th><div class="date-range"><input type="datetime-local" id="fdateFrom" value="' + esc(colFilters.dateFrom) + '"><input type="datetime-local" id="fdateTo" value="' + esc(colFilters.dateTo) + '"></div></th>' +
       '<th><input class="col-filter" id="fcomp" placeholder="obj…" value="' + esc(colFilters.comp) + '"></th>' +
       '<th><input class="col-filter" id="fproc" placeholder="proc…" value="' + esc(colFilters.proc) + '"></th>' +
       '<th><input class="col-filter" id="fthread" placeholder="thr…" value="' + esc(colFilters.thread) + '"></th>' +

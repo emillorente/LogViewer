@@ -42,8 +42,11 @@
 - Changed `process()` from generic `R: LogReader` to `Box<dyn LogReader>` for dynamic dispatch.
 - View auto-detection per-request in `handle_query`/`handle_upload` via `view_for_file()` (filename-based).
 - Upload handler returns only `{ path }` (no record counting); total is computed on first server-side query.
-- Query handler applies all filters server-side: column filters (case-insensitive substring), date range (ISO conversion), global search (space-separated AND), trigger filter.
-- `date_str_to_iso()` converts `dd/MM/yy` to `yyyy-MM-dd` for server-side date filtering.
+- Query handler applies all filters server-side: column filters (case-insensitive substring), date range (ISO datetime), global search (space-separated AND), trigger filter.
+- `date_str_to_iso()` converts datetime strings from both formats (`dd/MM/yy HH:mm:ss,fff` for CORE.OUT, `yy/MM/dd HH:mm:ss` for reu.out) to ISO 8601.
+- Date/time filter uses `<input type="datetime-local">` for hour-level precision; `dateTo` normalized to end-of-minute (`:59`).
+- In-memory record cache (`RwLock<HashMap<String, Vec<Record>>>`): first query loads file into RAM, subsequent queries filter from cache (<10ms).
+- Added `Clone` derives on `Record` and `Color` for cache storage.
 - Increased upload content-length limit from 100 MB to 1 GB.
 
 ### Code Quality
