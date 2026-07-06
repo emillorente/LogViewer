@@ -130,6 +130,20 @@ async fn handle_upload(
     })))
 }
 
+fn detect_op_class(msg: &str) -> &'static str {
+    let first = msg.trim_start().split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("");
+    match first.to_uppercase().as_str() {
+        "SELECT" | "WITH" => "select",
+        "INSERT" | "MERGE" => "insert",
+        "UPDATE" => "update",
+        "DELETE" | "DROP" | "TRUNCATE" => "delete",
+        "CREATE" | "ALTER" | "BEGIN" => "create",
+        "EXEC" | "EXECUTE" | "CALL" | "DECLARE" => "exec",
+        "COMMIT" => "commit",
+        _ => "",
+    }
+}
+
 #[allow(non_snake_case)]
 async fn handle_query(
     params: HashMap<String, String>,
@@ -152,14 +166,11 @@ async fn handle_query(
     let f_lineC = params.get("lineC").map(String::as_str).unwrap_or("");
     let f_dateFrom = params.get("dateFrom").map(String::as_str).unwrap_or("");
     let f_dateTo = params.get("dateTo").map(String::as_str).unwrap_or("");
-    // Normalize dateTo to be inclusive: if no seconds, append :59
     let f_date_to_adj: String;
     let f_date_to_ref = if !f_dateTo.is_empty() && !f_dateTo.contains(':') {
-        // Date only: YYYY-MM-DD → end of day
         f_date_to_adj = format!("{}T23:59:59", f_dateTo);
         f_date_to_adj.as_str()
     } else if !f_dateTo.is_empty() && f_dateTo.len() <= 16 {
-        // Date+time without seconds → append :59
         f_date_to_adj = format!("{}:59", f_dateTo);
         f_date_to_adj.as_str()
     } else {
@@ -169,7 +180,7 @@ async fn handle_query(
     let search_q = params.get("q").map(String::as_str).unwrap_or("");
 
     let mut total = 0usize;
-    let mut records = Vec::new();
+    let mut out_records = Vec::new();
 
     for rec in &all_records {
         let vars = &rec.variables;
@@ -195,10 +206,11 @@ async fn handle_query(
         if !f_line.is_empty() && !line.to_lowercase().contains(&f_line.to_lowercase()) { continue; }
         if !f_sourceC.is_empty() && !sourceC.to_lowercase().contains(&f_sourceC.to_lowercase()) { continue; }
         if !f_lineC.is_empty() && !lineC.to_lowercase().contains(&f_lineC.to_lowercase()) { continue; }
-        if f_hideTriggers && comp.to_uppercase().starts_with("TRIGGER") { continue; }
+        let is_trigger = comp.to_uppercase().starts_with("TRIGGER");
+        if f_hideTriggers && is_trigger { continue; }
 
         if !f_dateFrom.is_empty() || !f_dateTo.is_empty() {
-            if let Some(iso_str) = date_str_to_iso(ds) {
+            if let Some(ref iso_str) = date_str_to_iso(ds) {
                 if (!f_dateFrom.is_empty() && iso_str.as_str() < f_dateFrom) || (!f_dateTo.is_empty() && iso_str.as_str() > f_date_to_ref) {
                     continue;
                 }
@@ -206,22 +218,25 @@ async fn handle_query(
         }
 
         if !search_q.is_empty() {
-            let haystack = format!("{} {} {}:{} {:?}", rec.text, msg, comp,
-                vars.keys().map(|k| format!("{}:{}", k, vars.get(k).map_or("", |v| v))).collect::<Vec<_>>().join(" "), vars);
-            let haystack = haystack.to_lowercase();
+            let haystack = format!("{} {} {}", rec.text, msg, comp).to_lowercase();
             if !search_q.split_whitespace().all(|w| haystack.contains(w)) { continue; }
         }
 
         total += 1;
-        if total > skip && records.len() < limit {
-            records.push(rec.clone());
+        if total > skip && out_records.len() < limit {
+            let op_class = detect_op_class(msg);
+            out_records.push(serde_json::json!({
+                "v": rec.variables,
+                "c": rec.color,
+                "op": op_class,
+                "tr": is_trigger,
+            }));
         }
     }
 
     Ok(warp::reply::json(&serde_json::json!({
-        "records": records,
-        "total": total,
-        "limit": limit,
+        "r": out_records,
+        "t": total,
     })))
 }
 
@@ -697,7 +712,7 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s; re
 function buildUserDropdown() {
   const users = new Set();
   for (const r of allRecords) {
-    const u = ((r.variables||{}).user||'').trim();
+    const u = ((r.v||{}).user||'').trim();
     if (u && u !== 'n/a') users.add(u);
   }
   const sorted = [...users].sort();
@@ -831,11 +846,11 @@ function detectSqlOp(sql) {
   return '';
 }
 
-function openSqlModal(msg) {
+function openSqlModal(msg, opClass) {
   const isReu = currentFile && currentFile.toLowerCase().includes('reu');
   const isXml = !isReu && /^\s*</.test(msg) && msg.includes('>') && (/<\//.test(msg) || /\/\s*>/.test(msg));
   document.getElementById('sqlModalTitle').textContent = isReu ? 'SQL Query' : isXml ? 'XML' : 'Mensaje completo';
-  const op = isReu ? detectSqlOp(msg) : '';
+  const op = opClass || (isReu ? detectSqlOp(msg) : '');
   sqlModalBody.className = 'modal-body' + (op ? ' op-' + op : '');
   sqlModalBody.innerHTML = isReu ? formatSqlHtml(msg, op) : isXml ? formatXmlHtml(msg) : esc(msg);
   sqlModal.classList.add('open');
@@ -913,29 +928,28 @@ function getFiltered() {
   return allRecords;
 }
 
-function renderRows(filtered) {
-  const isReuFile = currentFile && currentFile.toLowerCase().includes('reu');
+function renderRows(records) {
   let rows = '';
-  for (const record of filtered) {
-    const color = record.color;
+  for (const rec of records) {
+    const color = rec.c;
     let barColor = 'transparent', dotColor = '#475569', badgeText = '';
     if (color && typeof color === 'object') {
       if (color.fromValue) { badgeText = simplifyLevel((color.fromValue.value||'')).toUpperCase(); dotColor = colorFor(color.fromValue.value); barColor = dotColor; }
       else if (color.fixed) { dotColor = color.fixed.color||'#475569'; barColor = dotColor; }
     }
-    const vars = record.variables||{};
+    const vars = rec.v||{};
     const ts = esc(vars.timestamp||vars.time||'');
     const comp = esc(vars.component||'');
     const proc = esc(vars.proc||'');
     const thread = esc(vars.thread||'');
     const user = esc(vars.user||'');
-    const msg = esc(vars.message||record.text||'');
+    const msg = esc(vars.message||'');
     const source = esc(vars.source||'');
     const line = esc(vars.line||'');
     const sourceC = esc(vars.sourceC||'');
     const lineC = esc(vars.lineC||'');
     const mShort = msg.length > 200 ? msg.slice(0,200)+'...' : msg;
-    const opClass = isReuFile ? detectSqlOp(vars.message||'') : '';
+    const opClass = rec.op || '';
     const opColor = OP_COLORS[opClass] || '';
     const opBar = opColor ? '<span class="op-bar" style="background:'+opColor+';box-shadow:0 0 6px '+opColor+'55"></span>' : '';
     const fnShort = source.split('\\').pop().split('/').pop();
@@ -1021,7 +1035,7 @@ function doRenderAll() {
     msgCells[i].addEventListener('click', (e) => {
       e.stopPropagation();
       const record = filtered[i];
-      if (record) openSqlModal(((record.variables||{}).message||record.text||''));
+      if (record) openSqlModal(((record.v||{}).message||''), record.op);
     });
   }
 
@@ -1121,8 +1135,8 @@ async function fetchPage(forceRefresh) {
     const res = await fetch('/api/query?' + params.toString());
     if (!res.ok) throw new Error(res.status + '');
     const data = await res.json();
-    allRecords = data.records || [];
-    allTotal = data.total || 0;
+    allRecords = data.r || [];
+    allTotal = data.t || 0;
   } catch (_) {
     container.innerHTML = '';
     allRecords = [];
@@ -1141,7 +1155,7 @@ function updateColVisibility() {
     const v = COL_VARS[n-1];
     let has = false;
     for (const r of allRecords) {
-      if (((r.variables||{})[v]||'')) { has = true; break; }
+      if (((r.v||{})[v]||'')) { has = true; break; }
     }
     if (!has) empty.push(n);
   }
