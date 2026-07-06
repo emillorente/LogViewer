@@ -1,2 +1,7 @@
-/target
-*.swp
+.DS_Store
+**/.DS_Store
+target/
+*.log
+logs/
+examples/CORE.OUT
+examples/reu.out

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize), serde(rename_all = "camelCase"))]
+#[derive(Clone)]
 pub enum Operation {
     If {
         condition: Condition,
@@ -22,6 +23,7 @@ pub enum Operation {
 }
 
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize), serde(rename_all = "camelCase"))]
+#[derive(Clone)]
 pub enum Expression {
     Record,
     Var(String),
@@ -30,6 +32,7 @@ pub enum Expression {
 }
 
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize), serde(rename_all = "camelCase"))]
+#[derive(Clone)]
 pub enum Condition {
     Match {
         expression: Expression,
@@ -37,6 +40,7 @@ pub enum Condition {
     },
 }
 
+#[derive(Clone)]
 pub struct Pattern {
     pub regex: String,
     pub compiled: Regex,
@@ -90,6 +94,7 @@ impl<'d> serde::de::Deserialize<'d> for Pattern {
 }
 
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[derive(Clone)]
 pub struct View {
     pub operations: Vec<Operation>,
 }
@@ -112,19 +117,16 @@ impl Pattern {
         }
     }
 
-    pub fn match_string(&self, string: &String) -> Option<HashMap<String, String>> {
+    pub fn match_string(&self, string: &str) -> Option<HashMap<String, String>> {
         match self.compiled.captures(string) {
             Some(m) => {
                 let mut map: HashMap<String, String> = HashMap::new();
                 for (value, key) in m.iter().zip(&self.all_groups) {
-                    match (key, value) {
-                        (Some(key), Some(value)) => {
-                            map.insert(
-                                key.to_owned(),
-                                value.as_str().to_owned(),
-                            );
-                        }
-                        _ => {}
+                    if let (Some(key), Some(value)) = (key, value) {
+                        map.insert(
+                            key.to_owned(),
+                            value.as_str().to_owned(),
+                        );
                     }
                 }
                 Some(map)
@@ -139,6 +141,12 @@ fn idt(f: &mut std::fmt::Formatter, indent: usize) -> std::fmt::Result {
         write!(f, "  ")?;
     }
     Ok(())
+}
+
+impl std::fmt::Display for Expression {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.print(f)
+    }
 }
 
 impl Expression {
@@ -158,8 +166,8 @@ impl Operation {
         f: &mut std::fmt::Formatter,
         indent: usize,
         condition: &Condition,
-        then_ops: &Vec<Operation>,
-        else_ops: &Vec<Operation>,
+        then_ops: &[Operation],
+        else_ops: &[Operation],
     ) -> std::fmt::Result {
         match condition {
             Condition::Match { expression, pattern } => {
@@ -167,10 +175,10 @@ impl Operation {
                 write!(f, " match \"{}\"", pattern.regex)?;
             }
         }
-        write!(f, "\n")?;
+        writeln!(f)?;
         if then_ops.is_empty() {
             idt(f, indent + 1)?;
-            write!(f, "NOTHING\n")?;
+            writeln!(f, "NOTHING")?;
         } else {
             for op in then_ops {
                 op.print(f, indent + 1)?;
@@ -190,7 +198,7 @@ impl Operation {
         };
         if !else_ops.is_empty() && !else_if {
             idt(f, indent)?;
-            write!(f, "ELSE\n")?;
+            writeln!(f, "ELSE")?;
             for op in else_ops {
                 op.print(f, indent + 1)?;
             }
@@ -213,17 +221,17 @@ impl Operation {
                 idt(f, indent)?;
                 write!(f, "SET {} = ", target)?;
                 expression.print(f)?;
-                write!(f, "\n")?;
+                writeln!(f)?;
             }
             Operation::ColorBy(expression) => {
                 idt(f, indent)?;
                 write!(f, "COLOR-BY ")?;
                 expression.print(f)?;
-                write!(f, "\n")?;
+                writeln!(f)?;
             }
             Operation::SkipRecord => {
                 idt(f, indent)?;
-                write!(f, "SKIP\n")?;
+                writeln!(f, "SKIP")?;
             }
         }
         Ok(())
@@ -245,7 +253,7 @@ impl View {
 
 impl Debug for View {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "View [\n")?;
+        writeln!(f, "View [")?;
         self.print(f, 1)?;
         write!(f, "]")?;
         Ok(())

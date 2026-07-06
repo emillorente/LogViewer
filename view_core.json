@@ -1,0 +1,22 @@
+{
+  "operations": [
+    {
+      "if": {
+        "condition": {
+          "match": {
+            "expression": "record",
+            "pattern": "^~(?P<level>[^~]*)~(?P<component>[^~]*)~(?P<proc>[^~]*)~(?P<thread>[^~]*)~(?P<timestamp>[^~]*)~(?P<user>[^~]*)~(?P<message>[^~]*)~(?P<source>[^~]*)~(?P<empty>[^~]*)~(?P<line>[^~]*)~(?P<sourceC>[^~]*)~(?P<lineC>[^~]*)~@_~"
+          }
+        },
+        "then": [
+          {
+            "colorBy": {
+              "var": "level"
+            }
+          }
+        ],
+        "else": []
+      }
+    }
+  ]
+}

@@ -1,3 +1,5 @@
+#![warn(clippy::all)]
+
 pub mod filters;
 mod process;
 pub mod readers;

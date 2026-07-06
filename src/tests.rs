@@ -100,7 +100,7 @@ fn test_process() {
     let view = get_view();
 
     // Process records
-    for record in process(file, view) {
+    for record in process(Box::new(file), view) {
         let record = record.expect("Error during processing");
         println!("{}", record.text);
         for (key, value) in &record.variables {

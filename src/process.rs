@@ -10,9 +10,9 @@ struct FilterInner {
     variables_last: HashMap<String, String>,
 }
 
-pub struct FilteredLogIterator<R: LogReader> {
+pub struct FilteredLogIterator {
     filter: FilterInner,
-    reader: R,
+    reader: Box<dyn LogReader>,
     view: View,
 }
 
@@ -41,7 +41,7 @@ impl FilterInner {
                 Operation::If { condition, then_ops, else_ops } => {
                     match condition {
                         Condition::Match { expression, pattern } => {
-                            let value = self.evaluate(expression, &record);
+                            let value = self.evaluate(expression, record);
                             if let Some(m) =  pattern.match_string(&value) {
                                 for (key, value) in m {
                                     self.set_variable(record, key, value);
@@ -58,11 +58,11 @@ impl FilterInner {
                     }
                 }
                 Operation::Set { target, expression } => {
-                    let value = self.evaluate(expression, &record);
+                    let value = self.evaluate(expression, record);
                     self.set_variable(record, target.to_owned(), value);
                 }
                 Operation::ColorBy(expression) => {
-                    let value = self.evaluate(expression, &record);
+                    let value = self.evaluate(expression, record);
                     record.color = Color::FromValue { value };
                 }
                 Operation::SkipRecord => {
@@ -74,19 +74,16 @@ impl FilterInner {
     }
 }
 
-impl<R: LogReader> FilteredLogIterator<R> {
-    fn next_triable(&mut self) -> Result<Option<Record>, IoError> {
+impl FilteredLogIterator {
+    fn try_next(&mut self) -> Result<Option<Record>, IoError> {
         loop {
-            // Read text from reader
             let text = match self.reader.read_record()? {
                 Some(t) => t,
                 None => return Ok(None),
             };
             let mut record = Record::new(text);
 
-            // Apply filters
             if !self.filter.apply_operations(&mut record, &self.view.operations) {
-                // Skipped
                 continue
             }
 
@@ -95,11 +92,11 @@ impl<R: LogReader> FilteredLogIterator<R> {
     }
 }
 
-impl<R: LogReader> Iterator for FilteredLogIterator<R> {
+impl Iterator for FilteredLogIterator {
     type Item = Result<Record, IoError>;
 
     fn next(&mut self) -> Option<Result<Record, IoError>> {
-        match self.next_triable() {
+        match self.try_next() {
             Ok(Some(r)) => Some(Ok(r)),
             Ok(None) => None,
             Err(e) => Some(Err(e)),
@@ -107,7 +104,7 @@ impl<R: LogReader> Iterator for FilteredLogIterator<R> {
     }
 }
 
-pub fn process<R: LogReader>(reader: R, view: View) -> FilteredLogIterator<R> {
+pub fn process(reader: Box<dyn LogReader>, view: View) -> FilteredLogIterator {
     FilteredLogIterator {
         filter: Default::default(),
         reader,

@@ -1,0 +1,30 @@
+{
+  "operations": [
+    {
+      "if": {
+        "condition": {
+          "match": {
+            "expression": "record",
+            "pattern": "^/\\*\\*\\* Query\\s+\\((?P<ms>[^)]+)\\)\\s+\\*\\*\\*\\*\\*\\*CONTEXT@(?P<level>[^,]+),(?P<component>[^,]+),(?P<proc>[^,]*),(?P<empty1>[^,]*),(?P<hora>[^,]*),(?P<ms2>[^,]*),(?P<source>[^,]*),(?P<line>[^;]+).*\\*\\*\\*/~(?P<message>.*)"
+          }
+        },
+        "then": [
+          {
+            "set": {
+              "target": "timestamp",
+              "expression": {
+                "var": "hora"
+              }
+            }
+          },
+          {
+            "colorBy": {
+              "var": "level"
+            }
+          }
+        ],
+        "else": []
+      }
+    }
+  ]
+}

@@ -4,7 +4,7 @@ use std::io::{Write, stdout};
 use std::process;
 
 use logviewer::process;
-use logviewer::readers::LogFile;
+use logviewer::readers;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::new("logviewer")
@@ -26,7 +26,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .about("Start a local webserver to analyze logs")
                     .arg(Arg::with_name("LOG")
                          .required(true)
-                         .help("Log file")));
+                         .help("Log file"))
+                    .arg(Arg::with_name("VIEW")
+                         .long("view")
+                         .short("v")
+                         .takes_value(true)
+                         .help("View definition (JSON file)")));
 
     let matches = app.get_matches();
 
@@ -40,9 +45,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match command {
         "process" => {
-            let log_file = {
+            let reader = {
                 let path = matches.value_of_os("LOG").unwrap();
-                LogFile::open(path)?
+                readers::detect_reader(path).unwrap_or_else(|_| Box::new(readers::LogFile::open(path).unwrap()))
             };
             let view = {
                 let path = matches.value_of_os("VIEW").unwrap();
@@ -50,13 +55,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::from_reader(file)?
             };
 
-            // Process records
             let out = stdout();
             let mut out = out.lock();
-            for record in process(log_file, view) {
+            for record in process(reader, view) {
                 let record = record?;
                 serde_json::to_writer(&mut out, &record)?;
-                write!(out, "\n")?;
+                writeln!(out)?;
             }
 
             // TODO: Allocate concrete colors for FromValue colors, print with
@@ -64,13 +68,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         #[cfg(feature = "web")]
         "web" => {
+            let log_path = matches.value_of_os("LOG").unwrap()
+                .to_str().unwrap().to_owned();
             let mut runtime = tokio::runtime::Builder::new()
                 .basic_scheduler()
                 .enable_all()
                 .build()
                 .unwrap();
+            eprintln!("Log file: {}", log_path);
             runtime.block_on(
-                logviewer::web::serve([127, 0, 0, 1].into(), 8000),
+                logviewer::web::serve([127, 0, 0, 1].into(), 8000, log_path),
             );
         }
         _ => panic!("Missing code for command {}", command),
