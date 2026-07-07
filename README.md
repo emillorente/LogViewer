@@ -1,7 +1,9 @@
 Log Viewer
 ==========
 
-This is a web viewer application, written in Rust (server) and JavaScript (frontend). It can process log files to filter lines matching a pattern, mark lines of interest in different colors (warnings, errors, ...), and extract information (client IP, HTTP code, ...) via regex captures.
+Web-based structured log viewer. Rust + JavaScript. Auto-detects CORE.OUT (tilde-delimited) and reu.out (SQL trace) formats. Per-column filters, pagination, dark/light themes.
+
+See `AGENTS.md` for build instructions.
 
 It is born from the realization that log viewers are not very well suited for the quick analysis of specific problems of patterns. They mainly fall into two categories:
 

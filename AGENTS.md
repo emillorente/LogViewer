@@ -153,20 +153,58 @@ cargo build --release --all-features --target x86_64-pc-windows-gnu
 ./target/release/logviewer process view_core.json examples/CORE.OUT
 ```
 
-### GitHub Actions (automatic builds)
+### Build on Windows (native)
 
-Every push to `master` triggers a build for Ubuntu, macOS and Windows. Download the binary from the Actions tab:
+```powershell
+# Install Rust from https://rustup.rs/
+# Open a terminal (PowerShell or cmd)
 
-1. Go to https://github.com/emillorente/LogViewer/actions
-2. Select the latest workflow run
-3. Download the artifact for your platform
+# Clone
+git clone https://github.com/emillorente/LogViewer.git
+cd LogViewer
 
-### Release (tagged versions)
+# Build release binary
+cargo build --release --all-features
 
-```bash
-# Tag and push to create a GitHub Release with binaries
-git tag v1.0
-git push --tags
+# Binary location:
+#   target\release\logviewer.exe
 ```
 
-This triggers the release workflow, which compiles for all 3 platforms and uploads the binaries to https://github.com/emillorente/LogViewer/releases
+### Add an application icon to the .exe
+
+1. Create a `.ico` file (e.g. `logo.ico`). You can use any tool (GIMP, ImageMagick, online converter) — the `.ico` should contain at least 32×32 and 256×256 resolutions.
+
+2. Create a resource file `logo.rc` in the project root:
+
+```rc
+1 ICON "logo.ico"
+```
+
+3. Add the following to `Cargo.toml` to embed the icon during compilation:
+
+```toml
+[package]
+# ... existing fields ...
+build = "build.rs"
+```
+
+4. Create `build.rs` in the project root:
+
+```rust
+fn main() {
+    println!("cargo:rerun-if-changed=logo.rc");
+    println!("cargo:rerun-if-changed=logo.ico");
+    embed_resource::compile("logo.rc", embed_resource::NONE);
+}
+```
+
+5. Add the `embed-resource` build dependency to `Cargo.toml`:
+
+```toml
+[build-dependencies]
+embed-resource = "2"
+```
+
+6. Build again — `logviewer.exe` will now show your icon in Explorer.
+
+> Works only on Windows. On other platforms the build.rs is harmless (no-op).
