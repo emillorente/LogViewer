@@ -20,7 +20,7 @@ struct CachedDataSet {
 
 #[derive(Clone)]
 struct AppState {
-    default_file: String,
+    default_file: Option<String>,
     cache: RecordCache,
 }
 
@@ -111,7 +111,7 @@ fn view_for_file(path: &str) -> View {
 pub async fn serve(
     host: std::net::IpAddr,
     port: u16,
-    default_file: String,
+    default_file: Option<String>,
 ) {
     let state = Arc::new(AppState {
         default_file,
@@ -195,7 +195,8 @@ async fn handle_query(
     params: HashMap<String, String>,
     state: Arc<AppState>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let path = params.get("file").cloned().unwrap_or(state.default_file.clone());
+    let path = params.get("file").cloned().or_else(|| state.default_file.clone());
+    let path = match path { Some(p) => p, None => { return Ok(warp::reply::json(&serde_json::json!({"r": [], "t": 0}))); } };
     let refresh = params.get("refresh").map(|v| v == "true").unwrap_or(false);
     let data = cached_records(&state, &path, refresh)?;
     let all_records = &data.records;
@@ -1200,7 +1201,7 @@ function doRenderAll() {
 }
 
 async function fetchPage(forceRefresh) {
-  if (!currentFile && !window.__hasDefaultFile && !allRecords.length) { doRenderAll(); return; }
+  if (!currentFile && !allRecords.length) { doRenderAll(); return; }
   showSpinner();
   const params = new URLSearchParams();
   if (currentFile) params.set('file', currentFile);
@@ -1326,9 +1327,7 @@ document.getElementById('themeToggle')?.addEventListener('click', () => {
 })();
 
 (function init() {
-  window.__hasDefaultFile = true;
-  pageSkip = 0;
-  fetchPage();
+  doRenderAll();
 })();
 
 function showSpinner() { document.getElementById('spinner').style.display = 'flex'; }

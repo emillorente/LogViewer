@@ -145,19 +145,8 @@ cat > target/release/LogViewer.app/Contents/MacOS/LogViewer <<'SCRIPT'
 #!/bin/bash
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# If a file was dropped on the app, use it
-if [ -f "$1" ]; then
-    LOG="$1"
-else
-    # Show file picker dialog
-    LOG=$(osascript -e 'POSIX path of (choose file with prompt "Select a log file:")' 2>/dev/null)
-    if [ -z "$LOG" ]; then
-        exit 1
-    fi
-fi
-
-# Start server in background
-"$DIR/lv-core" web "$LOG" &
+# Start server in background (no pre-loaded file — use the UI's "Open file…" button)
+"$DIR/lv-core" web &
 SERVER_PID=$!
 
 # Wait for server to be ready (max 10s)
@@ -237,8 +226,8 @@ cargo build --release --all-features --target x86_64-pc-windows-gnu
 ### Run
 
 ```bash
-# Web server (opens on http://127.0.0.1:8000)
-./target/release/logviewer web examples/CORE.OUT
+# Web server (opens on http://127.0.0.1:8000, no pre-loaded file — upload via UI)
+./target/release/logviewer web
 
 # Process a log file with a view (CLI mode, JSON lines output)
 ./target/release/logviewer process view_core.json examples/CORE.OUT

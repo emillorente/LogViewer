@@ -25,9 +25,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .subcommand(SubCommand::with_name("web")
                     .about("Start a local webserver to analyze logs")
                     .arg(Arg::with_name("LOG")
-                         .required(true)
-                         .help("Log file"))
-                    .arg(Arg::with_name("VIEW")
+                         .required(false)
+                         .help("Log file (optional — upload via UI)"))
+
+                         .arg(Arg::with_name("VIEW")
                          .long("view")
                          .short("v")
                          .takes_value(true)
@@ -68,14 +69,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         #[cfg(feature = "web")]
         "web" => {
-            let log_path = matches.value_of_os("LOG").unwrap()
-                .to_str().unwrap().to_owned();
+            let log_path = matches.value_of_os("LOG").map(|p| p.to_str().unwrap().to_owned());
+            if let Some(ref path) = log_path {
+                eprintln!("Log file: {}", path);
+            } else {
+                eprintln!("No log file specified — load via UI upload.");
+            }
             let mut runtime = tokio::runtime::Builder::new()
                 .basic_scheduler()
                 .enable_all()
                 .build()
                 .unwrap();
-            eprintln!("Log file: {}", log_path);
             runtime.block_on(
                 logviewer::web::serve([127, 0, 0, 1].into(), 8000, log_path),
             );
