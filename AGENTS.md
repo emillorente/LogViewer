@@ -165,8 +165,6 @@ cat > target/release/LogViewer.app/Contents/Info.plist <<'EOF'
     <string>10.15</string>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <key>LSUIElement</key>
-    <true/>
 </dict>
 </plist>
 EOF

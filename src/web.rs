@@ -121,14 +121,13 @@ pub async fn serve(
     // Open browser when ready (app launched without a file from .app bundle)
     let (tx, rx) = std::sync::mpsc::channel();
     let port_u16 = port;
+    let url = format!("http://{}:{}", host, port);
     std::thread::spawn(move || {
         rx.recv().ok();
         for _ in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(500));
             if std::net::TcpStream::connect((host, port_u16)).is_ok() {
-                std::process::Command::new("open")
-                    .arg(format!("http://{}:{}", host, port_u16))
-                    .spawn().ok();
+                std::process::Command::new("open").arg(&url).spawn().ok();
                 break;
             }
         }
